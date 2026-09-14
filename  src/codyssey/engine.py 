@@ -1,0 +1,292 @@
+"""Titan Codyssey Engine v0.1 - Educational coding platform."""
+
+import json
+import hashlib
+import re
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Callable, Any
+from enum import Enum
+
+from src.codyssey.sandbox import Sandbox
+
+
+class Difficulty(Enum):
+    TODDLER = "toddler"
+    KIDS = "kids"
+    TEENS = "teens"
+    PRO = "pro"
+
+
+@dataclass
+class Language:
+    id: str
+    name: str
+    icon: str
+    extension: str
+    difficulty: Difficulty
+    executor: Optional[Callable] = None
+    hello_world: str = ""
+    is_visual: bool = False
+    
+    def to_dict(self) -> Dict:
+        return {
+            "id": self.id, "name": self.name, "icon": self.icon,
+            "extension": self.extension, "difficulty": self.difficulty.value,
+            "is_visual": self.is_visual
+        }
+
+
+@dataclass
+class LessonStep:
+    step_id: str
+    title: str
+    instruction: str
+    starter_code: str
+    expected_output: Optional[str] = None
+    expected_pattern: Optional[str] = None
+    hint: str = ""
+    xp_reward: int = 10
+    is_checkpoint: bool = False
+    
+    def validate(self, user_output: str) -> bool:
+        if self.expected_output is not None:
+            return user_output.strip() == self.expected_output.strip()
+        if self.expected_pattern is not None:
+            return bool(re.search(self.expected_pattern, user_output, re.DOTALL))
+        return True
+
+
+@dataclass
+class Lesson:
+    lesson_id: str
+    title: str
+    description: str
+    language_id: str
+    difficulty: Difficulty
+    steps: List[LessonStep] = field(default_factory=list)
+    prerequisites: List[str] = field(default_factory=list)
+    branch_color: str = "#d4af37"
+    is_locked: bool = False
+    
+    def get_progress(self, completed_steps: List[str]) -> float:
+        if not self.steps: return 0.0
+        return len(completed_steps) / len(self.steps)
+
+
+@dataclass
+class Achievement:
+    badge_id: str
+    name: str
+    icon: str
+    description: str
+    condition: Callable[[Any], bool]
+
+
+class GitProgress:
+    def __init__(self, username: str):
+        self.username = username
+        self.branches: Dict[str, Dict] = {}
+        self.commits: List[Dict] = []
+        self.xp: int = 0
+        self.level: int = 1
+        self.streak: int = 0
+        self.achievements: List[str] = []
+        
+    def checkout_branch(self, lesson_id: str, lesson_title: str):
+        if lesson_id not in self.branches:
+            self.branches[lesson_id] = {
+                "name": lesson_title, "commits": [],
+                "current_step": 0, "merged": False
+            }
+        return self.branches[lesson_id]
+    
+    def commit(self, lesson_id: str, step_id: str, message: str, xp: int = 10):
+        branch = self.branches.get(lesson_id)
+        if not branch: return None
+        commit_hash = hashlib.sha1(
+            f"{lesson_id}:{step_id}:{self.username}".encode()
+        ).hexdigest()[:7]
+        commit_data = {
+            "hash": commit_hash, "lesson": lesson_id,
+            "step": step_id, "message": message,
+            "author": self.username, "xp": xp
+        }
+        branch["commits"].append(commit_data)
+        self.commits.append(commit_data)
+        self.xp += xp
+        self.streak += 1
+        new_level = (self.xp // 100) + 1
+        if new_level > self.level: self.level = new_level
+        return commit_data
+    
+    def merge_branch(self, lesson_id: str):
+        branch = self.branches.get(lesson_id)
+        if branch:
+            branch["merged"] = True
+            self.xp += 50
+        return branch
+    
+    def get_log(self, lesson_id: Optional[str] = None) -> List[Dict]:
+        if lesson_id: return self.branches.get(lesson_id, {}).get("commits", [])
+        return self.commits
+    
+    def to_dict(self) -> Dict:
+        return {
+            "username": self.username, "level": self.level,
+            "xp": self.xp, "streak": self.streak,
+            "branches": list(self.branches.keys()),
+            "total_commits": len(self.commits),
+            "achievements": self.achievements
+        }
+
+
+class CodysseyEngine:
+    THEME = {
+        "bg": "#0a0e17", "fg": "#d4af37",
+        "accent": "#00d4aa", "error": "#ff4757",
+        "success": "#2ed573"
+    }
+    
+    def __init__(self, username: str = "explorer"):
+        self.username = username
+        self.languages: Dict[str, Language] = {}
+        self.lessons: Dict[str, Lesson] = {}
+        self.sandbox = Sandbox()
+        self.progress = GitProgress(username)
+        self.achievements: List[Achievement] = []
+        self._register_defaults()
+        
+    def _register_defaults(self):
+        defaults = [
+            Language("python", "Python", "🐍", ".py", Difficulty.KIDS,
+                     self.sandbox.run_python, 'print("Hello Titan!")'),
+            Language("js", "JavaScript", "📜", ".js", Difficulty.TEENS,
+                     self.sandbox.run_javascript_stub,
+                     'console.log("Hello Titan!");'),
+            Language("java", "Java", "☕", ".java", Difficulty.TEENS, None,
+                     'System.out.println("Hello Titan!");'),
+            Language("blocks", "Titan Blocks", "🧩", ".blk", Difficulty.TODDLER,
+                     None, "", True),
+            Language("gdscript", "GDScript", "🎮", ".gd", Difficulty.KIDS, None,
+                     'print("Hello Titan!")'),
+            Language("cpp", "C++", "⚡", ".cpp", Difficulty.PRO, None,
+                     'std::cout << "Hello Titan!" << std::endl;'),
+        ]
+        for lang in defaults: self.languages[lang.id] = lang
+        
+        # Python Basics
+        py = Lesson("py_hello", "Python: First Steps",
+                   "Learn to talk to the computer", "python", Difficulty.KIDS)
+        py.steps = [
+            LessonStep("py_1", "Say Hello",
+                      'Type print("Hello") to make the computer talk.',
+                      'print("Hello")', "Hello", hint="Use double quotes!"),
+            LessonStep("py_2", "Your Name",
+                      'Make it say your name.', 'print("Shivay")', "Shivay"),
+            LessonStep("py_3", "Math Power",
+                      'Computers are calculators. Try 2 + 2.',
+                      'print(2 + 2)', "4", is_checkpoint=True),
+        ]
+        self.lessons[py.lesson_id] = py
+        
+        # Toddler Blocks
+        blk = Lesson("blk_robot", "Robot Maze",
+                    "Move the robot with blocks", "blocks", Difficulty.TODDLER,
+                    branch_color="#00d4aa", is_visual=True)
+        blk.steps = [
+            LessonStep("blk_1", "Move Forward",
+                      "Drag the ▶️ block to move robot.",
+                      "MOVE_FORWARD", None, expected_pattern="FORWARD|MOVE"),
+            LessonStep("blk_2", "Turn Right",
+                      "Add a 🔁 block.", "TURN_RIGHT", None,
+                      expected_pattern="TURN|RIGHT"),
+        ]
+        self.lessons[blk.lesson_id] = blk
+        
+        # Git Basics
+        git = Lesson("git_basics", "Git: Time Machine",
+                    "Learn how programmers save their work", "python",
+                    Difficulty.TEENS, branch_color="#ff4757")
+        git.steps = [
+            LessonStep("git_1", "First Commit",
+                      'Saving work = git commit. Run the code to save.',
+                      'print("commit: my first code")',
+                      "commit: my first code", is_checkpoint=True),
+            LessonStep("git_2", "Check Status",
+                      'See what changed.',
+                      'print("git status: 1 file changed")',
+                      "git status: 1 file changed"),
+        ]
+        self.lessons[git.lesson_id] = git
+    
+    def get_available_lessons(self, language_id: Optional[str] = None) -> List[Lesson]:
+        lessons = list(self.lessons.values())
+        if language_id: lessons = [l for l in lessons if l.language_id == language_id]
+        return [l for l in lessons if not l.is_locked]
+    
+    def start_lesson(self, lesson_id: str) -> Optional[LessonStep]:
+        lesson = self.lessons.get(lesson_id)
+        if not lesson: return None
+        self.progress.checkout_branch(lesson_id, lesson.title)
+        return lesson.steps[0] if lesson.steps else None
+    
+    def submit_step(self, lesson_id: str, step_id: str, code: str) -> Dict[str, Any]:
+        lesson = self.lessons.get(lesson_id)
+        if not lesson: return {"error": "Lesson not found"}
+        step = next((s for s in lesson.steps if s.step_id == step_id), None)
+        if not step: return {"error": "Step not found"}
+        lang = self.languages.get(lesson.language_id)
+        
+        if lang and lang.executor:
+            exec_result = lang.executor(code)
+        elif lesson.is_visual:
+            exec_result = {"success": True, "output": code, "error": None}
+        else:
+            exec_result = {"success": False, "output": "", "error": "No executor"}
+        
+        passed = False
+        if exec_result["success"] and not exec_result.get("error"):
+            passed = step.validate(exec_result["output"])
+        
+        commit_info = None
+        if passed:
+            commit_info = self.progress.commit(
+                lesson_id, step_id, f"Completed: {step.title}", step.xp_reward
+            )
+            branch = self.progress.branches.get(lesson_id)
+            if branch and len(branch["commits"]) >= len(lesson.steps):
+                self.progress.merge_branch(lesson_id)
+        
+        return {
+            "passed": passed, "output": exec_result.get("output", ""),
+            "error": exec_result.get("error"), "commit": commit_info,
+            "xp_gained": step.xp_reward if passed else 0,
+            "hint": step.hint if not passed else None
+        }
+    
+    def get_user_stats(self) -> Dict:
+        return {
+            "theme": self.THEME, "progress": self.progress.to_dict(),
+            "languages_learned": list(set(
+                self.lessons[lid].language_id for lid in self.progress.branches.keys()
+            )),
+            "total_lessons": len(self.lessons),
+            "next_unlock": self._get_next_unlock()
+        }
+    
+    def _get_next_unlock(self) -> Optional[str]:
+        if self.progress.xp >= 30 and "git_basics" not in self.progress.branches:
+            return "git_basics"
+        return None
+
+
+if __name__ == "__main__":
+    print("=" * 50)
+    print("🚀 TITAN CODOSSY ENGINE v0.1 BOOT")
+    print("=" * 50)
+    engine = CodysseyEngine(username="shivay")
+    print("\n📚 Available Lessons:")
+    for lesson in engine.get_available_lessons():
+        lock = "🔒" if lesson.is_locked else "✅"
+        print(f"  {lock} [{lesson.branch_color}] {lesson.title}")
+    print("\n🎉 ENGINE READY")
